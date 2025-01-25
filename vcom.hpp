@@ -11,6 +11,10 @@
 #include <string>
 #include <filesystem>
 #include <fstream>
+#include "procfs.hpp"
+
+/*TODO: упаковать все это в класс*/
+/*      там функция getCPU есть, это пиздец*/
 
 int serial_port = 0;
 std::string devPath;
@@ -118,6 +122,72 @@ void closePort()
     if(serial_port > 0)
     {
         close(serial_port);
+    }
+}
+
+std::string getRAM()
+{
+    pfs::procfs proc;
+    auto mem = proc.get_meminfo();
+    double memTotal, memAvailable;
+    int ramUsed;
+    
+    auto memItr = mem.find("MemAvailable");
+    if(memItr == mem.end())
+        return "0";
+    memAvailable = (*memItr).second;
+
+    memItr = mem.find("MemTotal");
+    if(memItr == mem.end())
+        return "0";
+    memTotal = (*memItr).second;
+
+    ramUsed = (memTotal - memAvailable) / 1024;
+
+    return std::to_string(ramUsed) + "MB";
+}
+
+/*подбросок*/
+void getCPU()
+{
+    pfs::procfs proc;
+    auto cpu = proc.get_stat();
+
+    cpu = proc.get_stat();
+    auto cpuUsage = cpu.cpus.total;
+    unsigned long long prevIdle = cpuUsage.idle + cpuUsage.iowait;
+    unsigned long long prevNonIdle = cpuUsage.user + cpuUsage.nice + cpuUsage.system + cpuUsage.irq + cpuUsage.softirq + cpuUsage.steal;
+    unsigned long long prevTotal = prevIdle + prevNonIdle;
+
+    std::chrono::steady_clock::time_point currentTime = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::duration pollingPeriod = std::chrono::seconds{1};
+
+    for(int i = 0; i < 10;)
+    {
+        if((std::chrono::steady_clock::now() - currentTime) >= pollingPeriod)
+        {
+            cpu = proc.get_stat();
+            cpuUsage = cpu.cpus.total;
+            currentTime = std::chrono::steady_clock::now();
+            unsigned long long idle = cpuUsage.idle + cpuUsage.iowait;
+            unsigned long long nonIdle = cpuUsage.user + cpuUsage.nice + cpuUsage.system + cpuUsage.irq + cpuUsage.softirq + cpuUsage.steal;
+            unsigned long long total = idle + nonIdle;
+
+            unsigned long long totalD = total - prevTotal;
+            unsigned long long idleD = idle - prevIdle;
+
+            if(totalD != 0)
+            {
+                double cpu_precentage = (totalD - idleD) / static_cast<double>(totalD) * 100;
+                int cpu_precentage_int = static_cast<int>(cpu_precentage);
+                std::cout << cpu_precentage_int<< "%" << std::endl;
+            }
+
+            prevIdle = cpuUsage.idle + cpuUsage.iowait;
+            prevNonIdle = cpuUsage.user + cpuUsage.nice + cpuUsage.system + cpuUsage.irq + cpuUsage.softirq + cpuUsage.steal;
+            prevTotal = prevIdle + prevNonIdle;
+            ++i;
+        }
     }
 }
 
