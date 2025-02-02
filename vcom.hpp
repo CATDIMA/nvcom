@@ -14,14 +14,32 @@
 #include <algorithm>
 #include <thread>
 #include <chrono>
+#include <math.h>
 #include "procfs.hpp"
 
-/*TODO: упаковать все это в класс*/
+/*TODO: 
+заполнить енамы, исправить логику работы порта на стороне МК
+протестить открытие порта и отправку данных
+написать асинки
+протестить прием данных
+упаковать все это в классы*/
+
+enum class alignas(8) CMD
+{
+    
+};
+
+enum class alignas(8) MODE
+{
+
+};
+
+constexpr int NEONLICHT_PID = 0x56CD;
+constexpr int NEONLICHT_VID = 0x0483;
 
 int serial_port = 0;
 std::string devPath;
-constexpr int NEONLICHT_PID = 0x56CD;
-constexpr int NEONLICHT_VID = 0x0483;
+termios tty;
 
 void vcpInit()
 {
@@ -115,7 +133,50 @@ void openPort()
 
     if(serial_port < 0)
     {
-        printf("Error %i from open %s\n", errno, strerror(errno));
+        std::cerr << "Errot " << errno << " from open: " << strerror(errno) << std::endl;
+    }
+
+    if(tcgetattr(serial_port, &tty) != 0)
+    {
+        std::cerr << "Error " << errno << " from tcgetattr: " << strerror(errno) << std::endl;
+    }
+
+    /*now set setting for the serial port*/
+    /*!!! BYTEFUCKING WARNING !!!*/
+    /*c_cflags - CONTROL MODE*/
+    tty.c_cflag &= ~PARENB;     /*Parity - disabled*/
+    tty.c_cflag &= ~CSTOPB;     /*Num of stop bits - 1*/
+    tty.c_cflag |=  CS8;        /*Num of bits per byte - 8*/
+    tty.c_cflag &= ~CRTSCTS;    /*Hardware flow control(RTS/CTS) - disabled*/
+    tty.c_cflag |=  CREAD | CLOCAL;     /*Turn on read and ignore ctrl lines*/
+
+    /*c_lflag - LOCAL MODES*/
+    tty.c_lflag &= ~ICANON;     /*Canonical mode - disabled*/
+    tty.c_lflag &= ~ECHO;       /*Echo - all disabled because canon. mode is disabled*/
+    tty.c_lflag &= ~ECHOE;
+    tty.c_lflag &= ~ECHONL;
+    tty.c_lflag &= ~ISIG;       /*Signal chars - disabled*/
+
+    /*c_iflag - INPUT MODES*/
+    tty.c_iflag &= ~(IXON | IXOFF | IXANY);     /*Software flow control - disabled*/
+    tty.c_iflag &= ~(IGNBRK|BRKINT|PARMRK|ISTRIP|INLCR|IGNCR|ICRNL);    /*Special handling for input - disabled*/
+
+    /*c_oflags - OUTPUT MODES*/
+    tty.c_oflag &= ~OPOST;      /*Special handling for output - disabled*/
+    tty.c_oflag &= ~ONLCR;      /*Conversion of new line char into CRLF*/
+
+    /*c_cc - VMIN&VTIME settings*/
+    tty.c_cc[VMIN]  = 16;    /*wait 16 bytes before returning*/
+    tty.c_cc[VTIME] = 0;    /*block indefinitely*/
+
+    /*set baud rate 115200*/
+    cfsetispeed(&tty, B115200);
+    cfsetospeed(&tty, B115200);
+
+    /*save these new settings*/
+    if(tcsetattr(serial_port, TCSANOW, &tty) != 0)
+    {
+        std::cerr << "Error " << errno << " in tcsetattr: " << strerror(errno) << std::endl;
     }
 }
 
@@ -150,7 +211,7 @@ std::string getRAM()
 }
 
 /*подбросок*/
-void getCPU(int& percent, const int poll_ms)
+void getCPU(double& percent, const int poll_ms)
 {
     pfs::procfs proc;
     auto cpu = proc.get_stat();
@@ -175,8 +236,59 @@ void getCPU(int& percent, const int poll_ms)
     if(totalD != 0)
     {
         double cpu_precentage = (totalD - idleD) / static_cast<double>(totalD) * 100;
-        percent = static_cast<int>(cpu_precentage);
+        percent = std::round(cpu_precentage * 10) / 10; 
     }
+}
+
+std::string getTimeString()
+{
+    std::time_t ctime = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm* cur_time = std::localtime(&ctime);
+
+    return std::string{std::to_string(cur_time->tm_hour) + "." + std::to_string(cur_time->tm_min)};
+}
+
+std::string getDateDMString()
+{
+    std::time_t ctime = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm* cur_time = std::localtime(&ctime);
+
+    if((cur_time->tm_mon + 1) > 10)
+        return std::string{std::to_string(cur_time->tm_mday) + "." + std::to_string(cur_time->tm_mon + 1)};
+    else
+        return std::string{std::to_string(cur_time->tm_mday) + ".0" + std::to_string(cur_time->tm_mon + 1)};
+}
+
+std::string getDateYString()
+{
+    std::time_t ctime = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm* cur_time = std::localtime(&ctime);
+
+    return std::string{std::to_string(cur_time->tm_year + 1900)};
+}
+
+void setMode(MODE* mode)
+{
+    write(serial_port, reinterpret_cast<const void*>(mode), sizeof(unsigned char));
+}
+
+void sendData(std::string data)
+{
+    if(data.length() <= 16 && data.at(data.length() -1) == 0)
+    {
+        write(serial_port, reinterpret_cast<const void*>(data.c_str()), data.length());
+    }
+}
+
+/*I don't know how to implement asyncs yet >_<*/
+MODE getModeAsync()
+{
+    
+}
+
+std::string getDataAsync()
+{
+
 }
 
 #endif
